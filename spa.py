@@ -135,14 +135,14 @@ def unpack_flatedecode_and_extract_text(filename, txtOnly=False):
 # Usage: spot_extract_javascript(string FILENAME, bool EXTRACT_TO_FILE)
 # If the 2nd argument is set to True, extracted JavaScript will be displayed AND written to a file (default). If it's set to False, it will only be displayed.
 
-def extract_javascript(pdf, jsObjectID, extractToFile):
+def unpack_javascript(pdf, jsObjectID, extractToFile):
     # Step 2 - Find where the content of an object is located and unpack it
     # For example, for objectID '251' we'll have to find this line --> "251 0 obj" (= pattern is "$objectID 0 obj")
     # Then we'll just have to take what's between "stream/endstream" tags located just after, and we'll unpack it!
     # Precisely, here's how content should be parsed: "$objectID 0 obj stream >>> CONTENT <<< endstream endobj"
     flateDecode_data = re.compile(jsObjectID + rb' 0 obj[\s\S]*?stream([\s\S]*?)endstream[\s\S]*?obj')
 
-    # Normally, one result only should be returned (so "flateDecode_data.findall(pdf)[0]" would have been sufficient), but just in case there's some problem with the regex it will let use see...
+    # Normally, one result only should be returned (so "flateDecode_data.findall(pdf)[0]" would have been sufficient), but just in case there's some problem with the regex it will let us see...
     for content in flateDecode_data.findall(pdf):
         content = content.strip(b'\r\n')
         print("-"*separ_line_len)
@@ -174,19 +174,30 @@ def spot_extract_javascript(filename, extractToFile=True):
     #    <</JavaScript 251 0 R/EmbeddedFiles 243 0 R>>  --> unpackable JS, objectID "251"
     with open(filename, "rb") as file:
         pdf = file.read()
-
-    regex1 = re.compile(rb'\/JavaScript.*?>>') # pre-match header of all potential JS objects
+    
+    regex1 = re.compile(rb'\/JavaScript[\S\s]*?>>') # pre-match header of all potential JS objects
     regex2 = re.compile(rb'\/JavaScript.*?([1-9][0-9]*).*?>>') # extract object's ID from the header
+    regex3 = re.compile(rb'(?<=[<])[0-9A-F]+(?=[>])') # extract inline hexstrings encoded like <HEXSTRING>
 
     noResultFound = True
     for jsObjectHeader in regex1.findall(pdf):
-        tempStr = jsObjectHeader.replace(b'\r', b'').replace(b'\n', b'') # we temporarily remove '\r' and '\n' characters from the header before making the string comparison
-        if tempStr[-3:] == b'R>>': # only those ending with "R>>" seems to be unpackable
+        
+        jsObjectHeader = jsObjectHeader.replace(b'\r', b'').replace(b'\n', b'') # we temporarily remove '\r' and '\n' characters from the header before making the string comparison
+        
+        # only JS objects ending with "R>>" seems to be unpackable
+        if jsObjectHeader[-3:] == b'R>>':
             noResultFound = False
             jsObjectID = regex2.findall(jsObjectHeader)[0]
             print("-"*separ_line_len)
             print("[+] Found JavaScript object number:", jsObjectID.decode('utf-8'))
-            extract_javascript(pdf, jsObjectID, extractToFile)
+            unpack_javascript(pdf, jsObjectID, extractToFile)
+
+        # try find hex strings encoded
+        hexStrings = regex3.findall(jsObjectHeader)
+        if hexStrings:
+            noResultFound = False
+            for hexStr in hexStrings:
+                print("[+] Decoded hex string:\n-----\n%s-----" % bytes.fromhex(hexStr.decode()).decode('utf-8'))
 
     if noResultFound:
         print("[-] Looks like this PDF doesn't contain JavaScript code!")
@@ -243,7 +254,6 @@ if __name__ == "__main__":
         exit(1)
 
     # Beginning real work
-    
     print("##### Pattern matching #####\n")
     for keyword in keywords_list:
         find_pattern(sys.argv[1], keyword, False)
@@ -265,7 +275,7 @@ if __name__ == "__main__":
     print("")
 
     #
-
+    
     print("##### Find and unpack JavaScript code #####\n")
     spot_extract_javascript(sys.argv[1], True)
     print("")
